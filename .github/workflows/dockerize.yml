@@ -38,8 +38,12 @@ jobs:
       - name: Parse platform matrix
         id: parse-matrix
         run: |
-          JSON_FORM=$(echo '${{ inputs.platforms }}' | yq -o=json | jq '{include: .}')
-          echo "platforms=$JSON_FORM" >> $GITHUB_OUTPUT
+          JSON_FORM=$(echo "${{ inputs.platforms }}" | yq -o=json | jq '{include: .}')
+          # These EOFs are used as a delimeter for the multi-line string
+          # See https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#example-of-a-multiline-string 
+          echo "platforms<<EOF" >> $GITHUB_OUTPUT
+          echo "$JSOM_FORM" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Prepare tags and version for manifest
         id: prep-tags
