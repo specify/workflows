@@ -1,0 +1,158 @@
+name: Dockerize
+
+on:
+  workflow_call:
+    inputs:
+      registry-service:
+        description: "Full DockerHub service name (e.g., specifyconsortium/specify7-service)"
+        required: true
+        type: string
+      username:
+        description: "Docker Hub username"
+        required: true
+        type: string
+      password:
+        description: "Usually a Docker Hub access token"
+        required: true
+        type: string
+      platforms:
+        description: "YML representation of all supported platforms and corresonding Action runners"
+        required: false
+        default: |
+            - name: amd64
+              platform: linux/amd64
+              runner: ubuntu-latest
+            - name: arm64
+              platform: linux/arm64
+              runner: ubuntu-24.04-arm
+        type: string
+
+jobs:
+  prep:
+    name: Pre-Dockerize Steps
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.prep-tags.outputs.tags }}
+      version: ${{ steps.prep-tags.outputs.version }}
+      platforms: ${{ steps.parse-matrix.outputs.platforms }}
+    steps:
+      - name: Parse platform matrix
+        id: parse-matrix
+        run: |
+          JSON_FORM=$(echo '${{ inputs.platforms }}' | yq -o=json | jq '{include: .}')
+          echo "platforms=JSON_FORM" >> $GITHUB_OUTPUT
+
+      - name: Prepare tags and version for manifest
+        id: prep-tags
+        run: |
+          DOCKER_IMAGE=${{ inputs.registry-service }}
+          VERSION=noop
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            VERSION=nightly
+          elif [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          elif [[ $GITHUB_REF == refs/heads/* ]]; then
+            # Docker does not like / in tag names, so replace them with -
+            # See https://github.com/specify/specify7-test-panel/issues/110#issuecomment-1943045253
+            VERSION=$(echo ${GITHUB_REF#refs/heads/} | sed -r 's#/+#-#g')
+            if [ "${{ github.event.repository.default_branch }}" = "$VERSION" ]; then
+              VERSION=main
+            fi
+          elif [[ $GITHUB_REF == refs/pull/* ]]; then
+            VERSION=pr-${{ github.event.number }}
+          fi
+          TAGS="${DOCKER_IMAGE}:${VERSION}"
+          if [[ $VERSION =~ ^v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            HOTFIX=${VERSION%.*}
+            MINOR=${HOTFIX%.*}
+            MAJOR=${MINOR%.*}
+            TAGS="$TAGS,${DOCKER_IMAGE}:${HOTFIX},${DOCKER_IMAGE}:${MINOR},${DOCKER_IMAGE}:${MAJOR},${DOCKER_IMAGE}:latest"
+          elif [[ $VERSION =~ ^v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            MINOR=${VERSION%.*}
+            MAJOR=${MINOR%.*}
+            TAGS="$TAGS,${DOCKER_IMAGE}:${MINOR},${DOCKER_IMAGE}:${MAJOR},${DOCKER_IMAGE}:latest"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            TAGS="$TAGS"
+          fi
+          echo "Tags: ${TAGS}"
+          echo "Version: ${VERSION}"
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+  build:
+    name: build & push
+    needs: prep
+    strategy:
+      fail-fast: false
+      matrix: ${{fromJson(needs.prep.outputs.platforms)}}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ inputs.username }}
+          password: ${{ inputs.password }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_VERSION=${{ needs.prep.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+          tags: ${{ needs.prep.outputs.tags }}
+          push: true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.name }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge:
+    name: create & push manifest
+    needs:
+      - prep
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ inputs.username }}
+          password: ${{ inputs.password }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        env:
+          TAGS: ${{ needs.prep.outputs.tags }}
+        run: |
+          echo "Pushing manifests on tags: ${TAGS}"
+          TAG_ARGS=$(echo "$TAGS" | tr ',' '\n' | sed 's/^/-t /' | xargs)
+          docker buildx imagetools create $TAG_ARGS \
+            $(printf '${{ inputs.registry-service }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ inputs.registry-service }}:${{ needs.prep.outputs.version }}
