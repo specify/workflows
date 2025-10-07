@@ -7,25 +7,24 @@ on:
         description: "Full DockerHub service name (e.g., specifyconsortium/specify7-service)"
         required: true
         type: string
-      username:
-        description: "Docker Hub username"
-        required: true
-        type: string
-      password:
-        description: "Usually a Docker Hub access token"
-        required: true
-        type: string
       platforms:
         description: "YML representation of all supported platforms and corresonding Action runners"
         required: false
         default: |
-            - name: amd64
-              platform: linux/amd64
-              runner: ubuntu-latest
-            - name: arm64
-              platform: linux/arm64
-              runner: ubuntu-24.04-arm
+          - name: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - name: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
         type: string
+    secrets:
+      username:
+        description: "Docker Hub username"
+        required: true
+      password:
+        description: "Usually the Docker Hub access token"
+        required: true
 
 jobs:
   prep:
@@ -93,8 +92,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ inputs.username }}
-          password: ${{ inputs.password }}
+          username: ${{ secrets.username }}
+          password: ${{ secrets.password }}
 
       - name: Build and push by digest
         id: build
@@ -140,8 +139,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ inputs.username }}
-          password: ${{ inputs.password }}
+          username: ${{ secrets.username }}
+          password: ${{ secrets.password }}
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
