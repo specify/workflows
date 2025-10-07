@@ -42,7 +42,7 @@ jobs:
           # These EOFs are used as a delimeter for the multi-line string
           # See https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#example-of-a-multiline-string 
           echo "platforms<<EOF" >> $GITHUB_OUTPUT
-          echo "$JSOM_FORM" >> $GITHUB_OUTPUT
+          echo "$JSON_FORM" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Prepare tags and version for manifest
