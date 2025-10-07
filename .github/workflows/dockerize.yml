@@ -39,7 +39,7 @@ jobs:
         id: parse-matrix
         run: |
           JSON_FORM=$(echo '${{ inputs.platforms }}' | yq -o=json | jq '{include: .}')
-          echo "platforms=JSON_FORM" >> $GITHUB_OUTPUT
+          echo "platforms=$JSON_FORM" >> $GITHUB_OUTPUT
 
       - name: Prepare tags and version for manifest
         id: prep-tags
